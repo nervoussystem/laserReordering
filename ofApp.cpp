@@ -8,13 +8,17 @@ vector<ofVec2f> pts;
 vector<vector<pair<int, bool> > > ptToPath;
 vector<pair<int, int> > endPts;
 int selectedPt = 0;
+
+//assumes no self intersecting curves
+
 //--------------------------------------------------------------
 void ofApp::setup(){
 
 }
 
+vector<ofPath> dummyPaths;
 void order(string filename) {
-	
+	dummyPaths.clear();
 	svg.load(filename);
 	paths = svg.getPaths();
 	ofSetWindowShape(svg.getWidth(), svg.getHeight());
@@ -28,14 +32,36 @@ void order(string filename) {
 		const ofPath & path = paths[i];
 		vector<ofPolyline> outline = path.getOutline();
 		//assume only one line per path
-		if (outline.size() > 1) cout << "BADD" << endl;
+		if (path.isFilled()) {
+			dummyPaths.push_back(path);
+			endPts.push_back(make_pair(-1, -1));
+			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
+			cout << "fill" << endl;
+			continue;
+		}
+		if (outline.size() > 1) {
+			endPts.push_back(make_pair(-1, -1));
+			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
+			dummyPaths.push_back(path);
+			cout << "BADD" << endl;
+			continue;
+		}
+		if (outline[0].isClosed()) {
+			endPts.push_back(make_pair(-1, -1));
+			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
+			dummyPaths.push_back(path);
+			cout << "closed" << endl;
+			continue;
+		}
 		
-		ofVec2f startPt = outline[0].getVertices().front();
-		ofVec2f endPt = outline[0].getVertices().back();
-
-
-		ofVec2f startTan = outline[0].getVertices()[2] - startPt;
-		ofVec2f endTan = outline[0].getVertices()[outline[0].getVertices().size() - 3] - endPt;
+		ofPolyline & line = outline[0];
+		ofVec2f startPt = line.getVertices().front();
+		ofVec2f endPt = line.getVertices().back();
+		float lineLen = line.getLengthAtIndex(line.size());
+		ofPoint tan1 = line.getPointAtLength(min(lineLen / 2.0, 4.0));
+		ofPoint tan2 = line.getPointAtLength(max(lineLen / 2.0, lineLen-4.0));
+		ofVec2f startTan = tan1 - startPt;
+		ofVec2f endTan = tan2 - endPt;
 		startTan.normalize();
 		endTan.normalize();
 
@@ -66,8 +92,10 @@ void order(string filename) {
 	ptToPath.resize(pts.size());
 	for (int i = 0; i < paths.size(); ++i) {
 		auto & ends = endPts[i];
-		ptToPath[ends.first].push_back(make_pair(i, false));
-		ptToPath[ends.second].push_back(make_pair(i,true));
+		if (ends.first >= 0) {
+			ptToPath[ends.first].push_back(make_pair(i, false));
+			ptToPath[ends.second].push_back(make_pair(i, true));
+		}
 	}
 
 	//merge edges
@@ -187,8 +215,11 @@ void order(string filename) {
 		}
 	}
 	vector<bool> isBoundary(pieces.size(), false);
+	ofVec3f center(svg.getWidth() / 2, svg.getHeight() / 2);
 	for (int i = 0; i < pieces.size(); ++i) {
 		float area = 0;
+		ofVec2f avgPt;
+		int numPts = 0;
 		auto & piece = pieces[i];
 		for (int j = 0; j < piece.size(); ++j) {
 			auto & line = endPts[piece[j].first];
@@ -199,11 +230,13 @@ void order(string filename) {
 			if (piece[j].second) {
 				reverse(verts.begin(), verts.end());
 			}
+			
 			for (int k = 0; k < verts.size() - 1; ++k) {
 				auto p1 = verts[k];
 				auto p2 = verts[k + 1];
+				numPts++;
 				float a = -p1.x*p2.y + p1.y*p2.x;
-
+				avgPt += p1 + p2;
 				//if (piece[j].second) a *= -1;
 				area += a;
 			}
@@ -215,6 +248,7 @@ void order(string filename) {
 		//cout << area << endl;
 		if (area < 0) {
 			isBoundary[i] = true;
+			center = avgPt / (numPts)*0.5;
 			cout << "boundary " << i << " " << piece.size() << endl;
 		}
 	}
@@ -232,7 +266,7 @@ void order(string filename) {
 	int firstPiece = 0;
 	//get first piece
 	float minD = 9e9;
-	ofVec3f center(svg.getWidth() / 2, svg.getHeight() / 2);
+	
 	vector<ofVec3f> centers(pieces.size());
 	for (int i = 0; i < pieces.size(); ++i) {
 		auto & piece = pieces[i];
@@ -256,10 +290,18 @@ void order(string filename) {
 	pieceStack.push_back(make_pair(firstPiece, 0));
 	marked[firstPiece] = true;
 	vector<ofPath> newPaths;
-	vector<bool> status(pieces.size(), false);
-	priority_queue < pair<float, int>, vector<pair<float, int> >, greater<pair<float, int> > > pieceQueue;
-	ofBeginSaveScreenAsPDF(filename.substr(0, filename.size() - 4) + "_ordered.pdf", false, false, ofRectangle(0, 0, svg.getWidth()+1, svg.getHeight()+1));
+
 	
+	vector<bool> status(pieces.size(), false);
+	ofBeginSaveScreenAsPDF(filename.substr(0, filename.size() - 4) + "_ordered.pdf", false, false, ofRectangle(0, 0, svg.getWidth()+1, svg.getHeight()+1));
+
+	for (auto & dum : dummyPaths) {
+		newPaths.push_back(dum);
+		dum.draw();
+	}
+	//distance ordering
+	/*
+	priority_queue < pair<float, int>, vector<pair<float, int> >, greater<pair<float, int> > > pieceQueue;
 	pieceQueue.push(make_pair(0, firstPiece));
 	while (pieceQueue.size() > 0) {
 		auto pp = pieceQueue.top();
@@ -303,7 +345,83 @@ void order(string filename) {
 			}
 		}
 	}
-	
+	*/
+
+	queue<int> pieceQueue;
+	pieceQueue.push(firstPiece);
+	status[firstPiece] = true;
+	while (pieceQueue.size() > 0) {
+		auto p = pieceQueue.front();
+		pieceQueue.pop();
+		auto & piece = pieces[p];
+		//check shellability
+		//are there unmarked sections separated by marked sections
+		//get first unmarked section
+		bool isShellable = true;
+		int start = 0;
+		for (int i = 0; i < piece.size(); ++i) {
+			auto l = piece[i];
+			if (!markedLines[l.first]) {
+				start = i;
+				break;
+			}
+		}
+		int curr = start;
+		bool markedFound = false;
+		bool secondUnmarked = false;
+		int firstMarked = 0;
+		do {
+			auto l = piece[curr];
+			if (markedLines[l.first]) {
+				firstMarked = curr;
+				if (secondUnmarked) {
+					//not shellable
+					isShellable = false;
+					break;
+				}
+				markedFound = true;
+			}
+			else {
+				if (markedFound) {
+					secondUnmarked = true;
+				}
+			}
+			curr = (curr + 1) % piece.size();
+		} while (curr != start);
+
+		if (!isShellable) {
+			cout << p << " is not shellable, put it back in the queue" << endl;
+			//pieceQueue.push(p);
+			status[p] = false;
+		}
+		else {
+			status[p] = true;
+			int i = firstMarked;
+			do {
+				auto l = piece[i];
+				int neighbor = lineToPiece[l.first * 2 + (1 - l.second)];
+				if (neighbor != -1 && !status[neighbor]) {
+					if (!isBoundary[neighbor]) {
+						status[neighbor] = true;
+						pieceQueue.push(neighbor);
+					}
+				}
+				if (!markedLines[l.first]) {
+					//if (!isBoundary[neighbor]) {
+						markedLines[l.first] = true;
+						auto & li = paths[l.first];
+						if (l.second) {
+							//reverse path
+							li = li.getReversed();
+						}
+						li.draw();
+						newPaths.push_back(li);
+					//}
+				}
+				i = (i + 1) % piece.size();
+			} while (i != firstMarked);
+		}
+	}
 	ofEndSaveScreenAsPDF();
 	
 	/*
