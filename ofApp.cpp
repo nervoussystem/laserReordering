@@ -27,6 +27,7 @@ void order(string filename) {
 	endPts.clear();
 	ptToPath.clear();
 	vector<pair<ofVec2f,ofVec2f> > endTans;
+	vector<bool> isDummy(paths.size(), false);;
 
 	for (int i = 0; i < paths.size(); ++i) {
 		const ofPath & path = paths[i];
@@ -37,12 +38,14 @@ void order(string filename) {
 			endPts.push_back(make_pair(-1, -1));
 			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
 			cout << "fill" << endl;
+			isDummy[i] = true;
 			continue;
 		}
 		if (outline.size() > 1) {
 			endPts.push_back(make_pair(-1, -1));
 			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
 			dummyPaths.push_back(path);
+			isDummy[i] = true;
 			cout << "BADD" << endl;
 			continue;
 		}
@@ -50,6 +53,7 @@ void order(string filename) {
 			endPts.push_back(make_pair(-1, -1));
 			endTans.push_back(make_pair(ofVec2f(), ofVec2f()));
 			dummyPaths.push_back(path);
+			isDummy[i] = true;
 			cout << "closed" << endl;
 			continue;
 		}
@@ -347,6 +351,7 @@ void order(string filename) {
 	}
 	*/
 
+	vector<bool> ptCut(pts.size(), false);
 	queue<int> pieceQueue;
 	pieceQueue.push(firstPiece);
 	status[firstPiece] = true;
@@ -372,6 +377,7 @@ void order(string filename) {
 		int firstMarked = 0;
 		do {
 			auto l = piece[curr];
+			
 			if (markedLines[l.first]) {
 				firstMarked = curr;
 				if (secondUnmarked) {
@@ -385,10 +391,36 @@ void order(string filename) {
 				if (markedFound) {
 					secondUnmarked = true;
 				}
+				auto ends = endPts[l.first];
+				if (curr != start && ptCut[ends.first] && ptCut[ends.second]) {
+
+				}
 			}
 			curr = (curr + 1) % piece.size();
 		} while (curr != start);
 
+		if (isShellable) {
+			curr = start;
+			curr = (curr + 1) % piece.size();
+			do {
+				auto l = piece[curr];
+				if (markedLines[l.first]) {
+					break;
+				}
+				else {
+					auto ends = endPts[l.first];
+					int pI = ends.first;
+					if (l.second) {
+						pI = ends.second;
+					}
+					if (ptCut[pI]) {
+						isShellable = false;
+						break;
+					}
+				}
+				curr = (curr + 1) % piece.size();
+			} while (curr != start);
+		}
 		if (!isShellable) {
 			cout << p << " is not shellable, put it back in the queue" << endl;
 			//pieceQueue.push(p);
@@ -409,6 +441,9 @@ void order(string filename) {
 				if (!markedLines[l.first]) {
 					//if (!isBoundary[neighbor]) {
 						markedLines[l.first] = true;
+						auto ends = endPts[l.first];
+						ptCut[ends.first] = true;
+						ptCut[ends.second] = true;
 						auto & li = paths[l.first];
 						if (l.second) {
 							//reverse path
@@ -422,7 +457,23 @@ void order(string filename) {
 			} while (i != firstMarked);
 		}
 	}
+
+	//check all marked
+	bool error = false;
+	int numMissing = 0;
+	for (int i = 0; i < markedLines.size(); ++i) {
+		if (!isDummy[i] && !markedLines[i]) {
+			error = true;
+			numMissing++;
+		}
+	}
+	if (error) {
+		cout << "Error missing lines " << numMissing << endl;
+		ofDrawBitmapString("ERROR", 20, 20);
+	}
+
 	ofEndSaveScreenAsPDF();
+	
 	
 	/*
 	ofVec2f center(svg.getWidth() / 2, svg.getHeight() / 2);
